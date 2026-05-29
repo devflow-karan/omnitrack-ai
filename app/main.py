@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down OmnitrackAI Server...")
     deep_worker.stop()
 
-app = FastAPI(title="OmnitrackAI Server", version="1.0.2", lifespan=lifespan)
+app = FastAPI(title="OmnitrackAI Server", version="1.1.4", lifespan=lifespan)
 
 # Include Routers
 app.include_router(ws_router)
@@ -193,6 +193,12 @@ async def get():
                         <p>SUBJECTS DETECTED</p>
                         <span id="ui-faces">0</span>
                     </div>
+                    <div class="stat-box" id="ui-subjects-list-box" style="padding: 0; background: transparent; border: none; box-shadow: none;">
+                        <p style="margin-bottom: 8px;">SUBJECT DETAILS</p>
+                        <div id="ui-subjects-list" style="display: flex; flex-direction: column; gap: 8px;">
+                            <!-- Injected via JS -->
+                        </div>
+                    </div>
                 </div>
                 <div class="stats-panel">
                     <h3>GESTURES & EMOTION</h3>
@@ -208,6 +214,10 @@ async def get():
                         <p>R-HAND GESTURE</p>
                         <span id="ui-right-hand">NONE</span>
                     </div>
+                    <div class="stat-box" id="ui-shape-box">
+                        <p>TWO-HAND SHAPE</p>
+                        <span id="ui-two-hand-shape">NONE</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -221,9 +231,13 @@ async def get():
             const uiFaces = document.getElementById('ui-faces');
             const uiLeftHand = document.getElementById('ui-left-hand');
             const uiRightHand = document.getElementById('ui-right-hand');
+            const uiTwoHandShape = document.getElementById('ui-two-hand-shape');
             const uiEmotion = document.getElementById('ui-emotion');
+            const uiSubjectsList = document.getElementById('ui-subjects-list');
 
             let ws;
+            let drawingPaths = [];
+            let currentStrokes = { 'Left': [], 'Right': [] };
             const hiddenCanvas = document.createElement('canvas');
             hiddenCanvas.width = 640;
             hiddenCanvas.height = 480;
@@ -250,7 +264,18 @@ async def get():
 
             function sendFrame() {
                 if (ws.readyState !== WebSocket.OPEN) return;
-                hiddenCtx.drawImage(video, 0, 0, 640, 480);
+                
+                // Ensure canvases match the actual camera resolution to fix alignment/tracking offset
+                if (video.videoWidth && video.videoHeight) {
+                    if (hiddenCanvas.width !== video.videoWidth) {
+                        hiddenCanvas.width = video.videoWidth;
+                        hiddenCanvas.height = video.videoHeight;
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                    }
+                }
+                
+                hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
                 const base64Data = hiddenCanvas.toDataURL('image/jpeg', 0.6);
                 ws.send(JSON.stringify({ image: base64Data }));
             }
@@ -306,16 +331,16 @@ async def get():
                 // Update Sidebar
                 uiFps.textContent = data.fps.toFixed(1);
                 uiFaces.textContent = data.faces ? data.faces.length : 0;
+                uiSubjectsList.innerHTML = '';
 
                 // Draw Faces
-                if (data.faces) {
+                if (data.faces && data.faces.length > 0) {
                     data.faces.forEach(face => {
                         const b = face.bbox;
                         const d = face.deep_attributes;
                         
                         // Flip X coordinate for mirrored video alignment
                         const flippedX = canvas.width - b.x - b.w;
-                        const cX = flippedX + b.w / 2;
                         
                         // HUD Target Box
                         ctx.strokeStyle = face.is_deep_stale ? '#ff003c' : '#00f3ff';
@@ -324,43 +349,28 @@ async def get():
                         // Draw corners instead of full rect for HUD feel
                         drawTargetCorners(ctx, flippedX, b.y, b.w, b.h, 20);
                         
-                        // Draw Emotion Emoji Floating above head
-                        const emotionLower = (d.emotion || 'neutral').toLowerCase();
-                        const emoji = EMOJI_MAP[emotionLower] || '😐';
+                        // Add face details to sidebar list instead of floating on canvas
+                        const isStaleColor = face.is_deep_stale ? '#ff003c' : '#00f3ff';
+                        const staleEmoColor = face.is_deep_stale ? '#ff003c' : '#fff';
                         
-                        // Update the emotion in the dashboard instead of floating over head
-                        uiEmotion.textContent = `${emoji} ${emotionLower.toUpperCase()}`;
-
-                        // HUD Data Panel Next to Face
-                        ctx.fillStyle = 'rgba(3, 10, 22, 0.7)';
-                        ctx.beginPath();
-                        ctx.moveTo(flippedX + b.w, b.y + 20);
-                        ctx.lineTo(flippedX + b.w + 20, b.y);
-                        ctx.lineTo(flippedX + b.w + 140, b.y);
-                        ctx.lineTo(flippedX + b.w + 140, b.y + 80);
-                        ctx.lineTo(flippedX + b.w, b.y + 80);
-                        ctx.fill();
-
-                        ctx.strokeStyle = '#00f3ff';
-                        ctx.lineWidth = 1;
-                        ctx.stroke();
-                        
-                        ctx.fillStyle = '#00f3ff';
-                        ctx.font = '12px "Share Tech Mono"';
-                        ctx.textAlign = 'left';
-                        ctx.fillText(`TRK_ID : ${face.face_id}`, flippedX + b.w + 10, b.y + 15);
-                        ctx.fillStyle = '#fff';
-                        ctx.fillText(`AGE    : ${d.age || '--'}`, flippedX + b.w + 10, b.y + 30);
-                        ctx.fillText(`GEN    : ${(d.gender || '--').toUpperCase()}`, flippedX + b.w + 10, b.y + 45);
-                        ctx.fillStyle = face.is_deep_stale ? '#ff003c' : '#00f3ff';
-                        ctx.fillText(`EMO    : ${(d.emotion || 'SCANNING').toUpperCase()}`, flippedX + b.w + 10, b.y + 60);
-                        ctx.fillStyle = 'rgba(255,255,255,0.5)';
-                        ctx.fillText(`ROT_X  : ${face.orientation.pitch.toFixed(1)}°`, flippedX + b.w + 10, b.y + 75);
+                        const faceHtml = `
+                            <div style="background: rgba(0, 243, 255, 0.05); padding: 10px; border-left: 3px solid ${isStaleColor}; font-size: 0.8rem; line-height: 1.4;">
+                                <div style="color: #00f3ff; margin-bottom: 4px; font-weight: bold; font-size: 0.9rem;">TRK_ID: ${face.face_id}</div>
+                                <div style="color: #fff;">AGE: ${d.age || '--'}</div>
+                                <div style="color: #fff;">GEN: ${(d.gender || '--').toUpperCase()}</div>
+                                <div style="color: ${staleEmoColor};">EMO: ${(d.emotion || 'SCANNING').toUpperCase()}</div>
+                                <div style="color: rgba(255,255,255,0.5);">ROT_X: ${face.orientation.pitch.toFixed(1)}°</div>
+                            </div>
+                        `;
+                        uiSubjectsList.innerHTML += faceHtml;
                     });
+                } else {
+                    uiSubjectsList.innerHTML = '<div style="color: rgba(255,255,255,0.5); font-size: 0.8rem; font-style: italic;">NO SUBJECTS IN VIEW</div>';
                 }
                 
                 let leftGesture = "NONE";
                 let rightGesture = "NONE";
+                let activeDrawingHands = { 'Left': false, 'Right': false };
 
                 // Draw Hands
                 if (data.hands) {
@@ -375,35 +385,15 @@ async def get():
                         const w = canvas.width;
                         const h = canvas.height;
 
-                        // Futuristic Grid Lines for Hand
-                        ctx.strokeStyle = 'rgba(0, 243, 255, 0.4)';
-                        ctx.lineWidth = 1.5;
-                        HAND_CONNECTIONS.forEach(conn => {
-                            const p1 = hand.landmarks[conn[0]];
-                            const p2 = hand.landmarks[conn[1]];
-                            ctx.beginPath();
-                            ctx.moveTo(w - (p1.x * w), p1.y * h);
-                            ctx.lineTo(w - (p2.x * w), p2.y * h);
-                            ctx.stroke();
-                        });
-
-                        // Draw Joints and Finger Names
-                        hand.landmarks.forEach((pt, idx) => {
-                            const px = w - (pt.x * w);
-                            const py = pt.y * h;
-                            
-                            ctx.fillStyle = '#00f3ff';
-                            ctx.beginPath();
-                            ctx.arc(px, py, 3, 0, 2 * Math.PI);
-                            ctx.fill();
-
-                            if (FINGER_TIPS[idx]) {
-                                ctx.fillStyle = '#fff';
-                                ctx.font = '10px "Share Tech Mono"';
-                                ctx.textAlign = 'center';
-                                ctx.fillText(FINGER_TIPS[idx].toUpperCase(), px, py - 10);
-                            }
-                        });
+                        // --- Air Drawing Logic ---
+                        if (hand.gesture === 'Pointing_Up') {
+                            activeDrawingHands[hand.handedness] = true;
+                            const indexTip = hand.landmarks[8];
+                            currentStrokes[hand.handedness].push({ x: w - (indexTip.x * w), y: indexTip.y * h });
+                        } else if (hand.gesture === 'Open_Palm') {
+                            drawingPaths = []; // Erase the board
+                            currentStrokes = { 'Left': [], 'Right': [] };
+                        }
 
                         // Draw Gesture & Handedness Tag near the wrist
                         const wrist = hand.landmarks[0];
@@ -429,6 +419,60 @@ async def get():
                         ctx.fillStyle = '#00f3ff';
                         ctx.fillText(`[${displayGestureForHand}]`, wristX, tagY + 30);
                     });
+                }
+                
+                // End strokes for hands that are no longer pointing up
+                ['Left', 'Right'].forEach(hnd => {
+                    if (!activeDrawingHands[hnd] && currentStrokes[hnd].length > 0) {
+                        drawingPaths.push(currentStrokes[hnd]);
+                        currentStrokes[hnd] = [];
+                    }
+                });
+                
+                // --- Render Air Drawing Path ---
+                const allStrokes = [...drawingPaths];
+                if (currentStrokes['Left'].length > 0) allStrokes.push(currentStrokes['Left']);
+                if (currentStrokes['Right'].length > 0) allStrokes.push(currentStrokes['Right']);
+
+                if (allStrokes.length > 0) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#ff00ff'; // Neon pink/purple for drawing
+                    ctx.lineWidth = 4;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = '#ff00ff';
+                    
+                    allStrokes.forEach(stroke => {
+                        if (stroke.length === 1) {
+                            // Draw a dot if stroke is only 1 point
+                            ctx.moveTo(stroke[0].x, stroke[0].y);
+                            ctx.lineTo(stroke[0].x + 0.1, stroke[0].y);
+                        } else if (stroke.length > 1) {
+                            ctx.moveTo(stroke[0].x, stroke[0].y);
+                            for (let i = 1; i < stroke.length; i++) {
+                                ctx.lineTo(stroke[i].x, stroke[i].y);
+                            }
+                        }
+                    });
+                    
+                    ctx.stroke();
+                    ctx.shadowBlur = 0; // reset
+                }
+                
+                // --- Render Two-Hand Shape Guess ---
+                if (data.two_hand_gesture) {
+                    uiTwoHandShape.textContent = data.two_hand_gesture.toUpperCase();
+                    
+                    ctx.fillStyle = '#00f3ff';
+                    ctx.font = 'bold 40px "Share Tech Mono"';
+                    ctx.textAlign = 'center';
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#00f3ff';
+                    ctx.fillText(`[ SHAPE DETECTED: ${data.two_hand_gesture} ]`, canvas.width / 2, 80);
+                    ctx.shadowBlur = 0;
+                } else {
+                    uiTwoHandShape.textContent = "NONE";
                 }
                 
                 uiLeftHand.textContent = leftGesture;

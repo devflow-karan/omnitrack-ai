@@ -44,7 +44,7 @@ async def websocket_process(websocket: WebSocket):
                 continue
 
             # 3. Process frame with AdvancedFaceDetector
-            faces, hands = detector.process_frame(frame)
+            faces, hands, two_hand_gesture = detector.process_frame(frame)
             
             # Calculate FPS
             frame_count += 1
@@ -60,6 +60,7 @@ async def websocket_process(websocket: WebSocket):
             response = FrameResponse(
                 faces=faces,
                 hands=hands,
+                two_hand_gesture=two_hand_gesture,
                 fps=fps,
                 timestamp=time.time()
             )

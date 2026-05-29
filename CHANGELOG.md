@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] - 2026-05-29
+
+### Fixed
+- Fixed critical WebRTC canvas alignment bug where the drawing path would not follow the finger perfectly due to camera aspect ratio stretching. The canvas now dynamically syncs to the intrinsic video resolution.
+- Fixed an issue where single-point strokes (dots) would be invisible.
+
+## [1.1.3] - 2026-05-29
+
+### Changed
+- UI Redesign: Removed the floating `TRK_ID` and telemetry text blocks that were drawing directly next to faces on the canvas.
+- Face telemetry (ID, Age, Gender, Emotion, Rotation) is now dynamically listed in the `TELEMETRY` sidebar panel, making the main camera feed much cleaner.
+
+## [1.1.2] - 2026-05-29
+
+### Added
+- Added `TWO-HAND SHAPE` field to the sidebar dashboard for continuous monitoring of joined hand shapes.
+
+## [1.1.1] - 2026-05-29
+
+### Fixed
+- Improved Air Drawing logic to support multiple separate drawing strokes. Drawing now appropriately stops when the user lowers their finger and starts a new stroke when raised again, instead of connecting all points with a single continuous line.
+
+## [1.1.0] - 2026-05-29
+
+### Added
+- **Air Drawing**: Hold up an index finger (`POINTING_UP`) to draw neon pink paths on the screen. Open your hand (`OPEN_PALM`) to erase the canvas.
+- **Two-Hand Shape Recognition**: Geometrically tracks and identifies shapes (like Hearts, Triangles, and Rectangles/Cameras) formed by joining two hands.
+- Hid the distracting full-hand skeleton wireframe to give the UI a cleaner HUD look.
+
 ## [1.0.2] - 2026-05-29
 
 ### Fixed

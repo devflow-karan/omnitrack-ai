@@ -4,7 +4,7 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import time
-from typing import Tuple
+from typing import Tuple, Optional
 
 from app.models.schemas import FaceData, BoundingBox, Orientation, DeepFaceAttributes, HandData, Point3D
 from app.services.tracking import CentroidTracker
@@ -38,7 +38,7 @@ class AdvancedFaceDetector:
         self.age_smoothers = {}
         self.emotion_smoothers = {}
 
-    def process_frame(self, frame: np.ndarray) -> Tuple[list[FaceData], list[HandData]]:
+    def process_frame(self, frame: np.ndarray) -> Tuple[list[FaceData], list[HandData], Optional[str]]:
         # Convert BGR to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
@@ -162,6 +162,7 @@ class AdvancedFaceDetector:
         # 2. Process Hands & Gestures
         hand_results = self.gesture_recognizer.recognize(mp_image)
         hand_data_list = []
+        two_hand_gesture = None
         
         if hand_results.hand_landmarks:
             for i, landmarks in enumerate(hand_results.hand_landmarks):
@@ -197,8 +198,42 @@ class AdvancedFaceDetector:
                     gesture=gesture,
                     landmarks=pts
                 ))
+            
+            # --- Two Hand Shape Heuristics ---
+            if len(hand_data_list) == 2:
+                hand1 = hand_data_list[0]
+                hand2 = hand_data_list[1]
+                
+                left_hand = hand1 if hand1.handedness == "Left" else (hand2 if hand2.handedness == "Left" else None)
+                right_hand = hand1 if hand1.handedness == "Right" else (hand2 if hand2.handedness == "Right" else None)
+                
+                if left_hand and right_hand:
+                    lt = np.array([left_hand.landmarks[4].x, left_hand.landmarks[4].y, left_hand.landmarks[4].z])
+                    rt = np.array([right_hand.landmarks[4].x, right_hand.landmarks[4].y, right_hand.landmarks[4].z])
+                    li = np.array([left_hand.landmarks[8].x, left_hand.landmarks[8].y, left_hand.landmarks[8].z])
+                    ri = np.array([right_hand.landmarks[8].x, right_hand.landmarks[8].y, right_hand.landmarks[8].z])
+                    
+                    tt_dist = np.linalg.norm(lt - rt)
+                    ii_dist = np.linalg.norm(li - ri)
+                    lt_ri_dist = np.linalg.norm(lt - ri)
+                    rt_li_dist = np.linalg.norm(rt - li)
+                    
+                    touch_thresh = 0.08
+                    
+                    if tt_dist < touch_thresh and ii_dist < touch_thresh:
+                        li_pip = np.array([left_hand.landmarks[6].x, left_hand.landmarks[6].y, left_hand.landmarks[6].z])
+                        ri_pip = np.array([right_hand.landmarks[6].x, right_hand.landmarks[6].y, right_hand.landmarks[6].z])
+                        pip_dist = np.linalg.norm(li_pip - ri_pip)
+                        
+                        if pip_dist > ii_dist * 2.0: # If PIP joints are far away relative to tips, fingers are curved
+                            two_hand_gesture = "HEART ❤️"
+                        else:
+                            two_hand_gesture = "TRIANGLE 🔺"
+                            
+                    elif lt_ri_dist < touch_thresh and rt_li_dist < touch_thresh:
+                        two_hand_gesture = "CAMERA/RECTANGLE 📸"
 
-        return face_data_list, hand_data_list
+        return face_data_list, hand_data_list, two_hand_gesture
 
     def close(self):
         self.detector.close()
