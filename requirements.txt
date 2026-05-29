@@ -1,0 +1,9 @@
+opencv-python-headless>=4.8.0.0
+mediapipe>=0.10.0
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+pydantic-settings>=2.0.0
+numpy>=1.24.0
+jinja2>=3.1.2
+deepface>=0.0.84
+tf-keras>=2.15.0
