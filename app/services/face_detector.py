@@ -48,6 +48,7 @@ class AdvancedFaceDetector:
         face_data_list = []
         rects = []
         orientations_list = []
+        smiles_list = []
         h, w, _ = frame.shape
 
         if face_results.face_landmarks:
@@ -79,6 +80,11 @@ class AdvancedFaceDetector:
                 pitch, yaw, roll, rvec, tvec = estimate_head_pose(points_2d, (h, w))
                 
                 orientations_list.append(Orientation(pitch=pitch, yaw=yaw, roll=roll))
+                
+                # Heuristic for smile (mouth width vs lower face height)
+                mouth_width = np.linalg.norm(points_2d[4] - points_2d[5])
+                lower_face_height = np.linalg.norm(points_2d[0] - points_2d[1])
+                smiles_list.append(mouth_width > lower_face_height * 0.85)
 
         # Update Face Tracker
         objects = self.tracker.update(rects)
@@ -87,6 +93,7 @@ class AdvancedFaceDetector:
         for object_id, centroid in objects.items():
             matched_rect = None
             matched_orientation = Orientation(pitch=0, yaw=0, roll=0)
+            matched_smiling = False
             
             min_dist = float("inf")
             for i, (rx, ry, rw, rh) in enumerate(rects):
@@ -97,6 +104,7 @@ class AdvancedFaceDetector:
                     min_dist = dist
                     matched_rect = (rx, ry, rw, rh)
                     matched_orientation = orientations_list[i]
+                    matched_smiling = smiles_list[i]
 
             if matched_rect is None:
                 continue
@@ -131,6 +139,10 @@ class AdvancedFaceDetector:
                 
                 if time.time() - cached_attr["timestamp"] < 2.0:
                     is_deep_stale = False
+            
+            # Override emotion if landmark heuristic strongly indicates a smile
+            if matched_smiling:
+                emotion = "happy"
 
             face_data = FaceData(
                 face_id=object_id,
@@ -156,6 +168,29 @@ class AdvancedFaceDetector:
                 handedness = hand_results.handedness[i][0].category_name if hand_results.handedness else "Unknown"
                 gesture = hand_results.gestures[i][0].category_name if hand_results.gestures and hand_results.gestures[i] else "None"
                 pts = [Point3D(x=lm.x, y=lm.y, z=lm.z) for lm in landmarks]
+                
+                # Fallback heuristic for back-hand fist (MediaPipe struggles with this) and Thumb Up mixup
+                if gesture in ["None", "Thumb_Up"]:
+                    wrist = np.array([pts[0].x, pts[0].y, pts[0].z])
+                    fingers_curled = True
+                    # Compare distance of fingertips to wrist vs MCP (knuckles) to wrist
+                    for tip_idx, mcp_idx in [(8, 5), (12, 9), (16, 13), (20, 17)]:
+                        tip = np.array([pts[tip_idx].x, pts[tip_idx].y, pts[tip_idx].z])
+                        mcp = np.array([pts[mcp_idx].x, pts[mcp_idx].y, pts[mcp_idx].z])
+                        if np.linalg.norm(tip - wrist) > np.linalg.norm(mcp - wrist):
+                            fingers_curled = False
+                            break
+                    if fingers_curled:
+                        # Check thumb extension to distinguish Fist from Thumb Up
+                        thumb_tip = np.array([pts[4].x, pts[4].y, pts[4].z])
+                        index_mcp = np.array([pts[5].x, pts[5].y, pts[5].z])
+                        wrist_to_mcp_dist = np.linalg.norm(index_mcp - wrist)
+                        thumb_to_index_dist = np.linalg.norm(thumb_tip - index_mcp)
+                        
+                        if thumb_to_index_dist > wrist_to_mcp_dist * 0.8:
+                            gesture = "Thumb_Up"
+                        else:
+                            gesture = "Closed_Fist"
                 
                 hand_data_list.append(HandData(
                     handedness=handedness,

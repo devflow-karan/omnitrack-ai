@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down OmnitrackAI Server...")
     deep_worker.stop()
 
-app = FastAPI(title="OmnitrackAI Server", lifespan=lifespan)
+app = FastAPI(title="OmnitrackAI Server", version="1.0.2", lifespan=lifespan)
 
 # Include Routers
 app.include_router(ws_router)
@@ -183,23 +183,31 @@ async def get():
             </header>
 
             <div class="dashboard">
-                <div class="stats-panel" id="stats-panel">
+                <div class="stats-panel">
                     <h3><div class="status-indicator"></div> TELEMETRY</h3>
-                <div class="stat-box">
-                    <p>SYSTEM FPS</p>
-                    <span id="ui-fps">--</span>
+                    <div class="stat-box">
+                        <p>SYSTEM FPS</p>
+                        <span id="ui-fps">--</span>
+                    </div>
+                    <div class="stat-box">
+                        <p>SUBJECTS DETECTED</p>
+                        <span id="ui-faces">0</span>
+                    </div>
                 </div>
-                <div class="stat-box">
-                    <p>SUBJECTS DETECTED</p>
-                    <span id="ui-faces">0</span>
-                </div>
-                <div class="stat-box" id="ui-left-box">
-                    <p>L-HAND GESTURE</p>
-                    <span id="ui-left-hand">NONE</span>
-                </div>
-                <div class="stat-box" id="ui-right-box">
-                    <p>R-HAND GESTURE</p>
-                    <span id="ui-right-hand">NONE</span>
+                <div class="stats-panel">
+                    <h3>GESTURES & EMOTION</h3>
+                    <div class="stat-box" id="ui-emotion-box">
+                        <p>EMOTION</p>
+                        <span id="ui-emotion">😐 NEUTRAL</span>
+                    </div>
+                    <div class="stat-box" id="ui-left-box">
+                        <p>L-HAND GESTURE</p>
+                        <span id="ui-left-hand">NONE</span>
+                    </div>
+                    <div class="stat-box" id="ui-right-box">
+                        <p>R-HAND GESTURE</p>
+                        <span id="ui-right-hand">NONE</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -213,6 +221,7 @@ async def get():
             const uiFaces = document.getElementById('ui-faces');
             const uiLeftHand = document.getElementById('ui-left-hand');
             const uiRightHand = document.getElementById('ui-right-hand');
+            const uiEmotion = document.getElementById('ui-emotion');
 
             let ws;
             const hiddenCanvas = document.createElement('canvas');
@@ -319,11 +328,8 @@ async def get():
                         const emotionLower = (d.emotion || 'neutral').toLowerCase();
                         const emoji = EMOJI_MAP[emotionLower] || '😐';
                         
-                        ctx.font = '50px sans-serif'; // Emojis need standard fonts
-                        ctx.textAlign = 'center';
-                        // Add floating animation effect
-                        const floatOffset = Math.sin(Date.now() / 200) * 5;
-                        ctx.fillText(emoji, cX, b.y - 60 + floatOffset);
+                        // Update the emotion in the dashboard instead of floating over head
+                        uiEmotion.textContent = `${emoji} ${emotionLower.toUpperCase()}`;
 
                         // HUD Data Panel Next to Face
                         ctx.fillStyle = 'rgba(3, 10, 22, 0.7)';
@@ -406,9 +412,12 @@ async def get():
                         
                         const displayGestureForHand = GESTURE_MAP[hand.gesture] || hand.gesture.toUpperCase();
 
+                        // Keep tag on-screen if hand goes too low
+                        const tagY = Math.min(wristY + 20, h - 50);
+
                         ctx.fillStyle = 'rgba(3, 10, 22, 0.8)';
                         ctx.beginPath();
-                        ctx.rect(wristX - 60, wristY + 20, 120, 45);
+                        ctx.rect(wristX - 60, tagY, 120, 45);
                         ctx.fill();
                         ctx.strokeStyle = '#00f3ff';
                         ctx.stroke();
@@ -416,9 +425,9 @@ async def get():
                         ctx.fillStyle = '#fff';
                         ctx.font = '12px "Share Tech Mono"';
                         ctx.textAlign = 'center';
-                        ctx.fillText(`SYS.${hand.handedness.toUpperCase()}`, wristX, wristY + 35);
+                        ctx.fillText(`SYS.${hand.handedness.toUpperCase()}`, wristX, tagY + 15);
                         ctx.fillStyle = '#00f3ff';
-                        ctx.fillText(`[${displayGestureForHand}]`, wristX, wristY + 50);
+                        ctx.fillText(`[${displayGestureForHand}]`, wristX, tagY + 30);
                     });
                 }
                 
