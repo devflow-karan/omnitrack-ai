@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-29
+
+### Added
+- Integrated **YAMNet Audio Classification** via Google MediaPipe. The system now records microphone audio through the browser, converts it to a 16kHz raw PCM Float32 stream, and transmits it over WebSocket alongside the video frame.
+- Added a `YAMNetAudioClassifier` on the Python backend that buffers audio and triggers detection events specifically for 50+ classes of Animals and Birds (e.g. Dog bark, Cat meow, Bird chirp, Roar).
+- Added a **Jarvis Text-to-Speech (TTS)** module to the frontend using the Web Speech API. When the AI detects an animal/bird sound, it will synthesize speech and announce: *"Sir, I have detected the sound of a [Bird/Dog/etc]"* using a deep UK English voice.
+- Added an `AUDIO SCANNERS` block to the HUD Telemetry dashboard to visualize when the system detects a target sound.
+
+## [1.1.5] - 2026-05-29
+
+### Fixed
+- Fixed an issue where DeepFace telemetrics (Age, Emotion, Gender) were failing to lock onto live faces but worked fine for static images. This was caused by the recent WebRTC alignment fix trying to stream massive 1080p/4K raw frames over the WebSocket, which plummeted the FPS and caused the Centroid Tracker to lose track of the face ID between frames due to large pixel distances. 
+- Implemented a smart cap on the WebRTC canvas resolution (max 800px width) while maintaining intrinsic aspect ratios, bringing FPS back up.
+- Increased the tracking algorithm's `MAX_DISTANCE_THRESHOLD` in `config.py` from 150 to 300 to better handle rapid head movements.
+
 ## [1.1.4] - 2026-05-29
 
 ### Fixed

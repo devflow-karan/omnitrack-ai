@@ -38,5 +38,6 @@ class FrameResponse(BaseModel):
     faces: List[FaceData]
     hands: List[HandData]
     two_hand_gesture: Optional[str] = None
+    audio_event: Optional[str] = None
     fps: float
     timestamp: float

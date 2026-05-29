@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down OmnitrackAI Server...")
     deep_worker.stop()
 
-app = FastAPI(title="OmnitrackAI Server", version="1.1.4", lifespan=lifespan)
+app = FastAPI(title="OmnitrackAI Server", version="1.2.0", lifespan=lifespan)
 
 # Include Routers
 app.include_router(ws_router)
@@ -218,6 +218,10 @@ async def get():
                         <p>TWO-HAND SHAPE</p>
                         <span id="ui-two-hand-shape">NONE</span>
                     </div>
+                    <div class="stat-box" id="ui-audio-box">
+                        <p>AUDIO SCANNERS</p>
+                        <span id="ui-audio">LISTENING...</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -234,8 +238,11 @@ async def get():
             const uiTwoHandShape = document.getElementById('ui-two-hand-shape');
             const uiEmotion = document.getElementById('ui-emotion');
             const uiSubjectsList = document.getElementById('ui-subjects-list');
+            const uiAudio = document.getElementById('ui-audio');
+            const uiAudioBox = document.getElementById('ui-audio-box');
 
             let ws;
+            let latestAudioBase64 = null;
             let drawingPaths = [];
             let currentStrokes = { 'Left': [], 'Right': [] };
             const hiddenCanvas = document.createElement('canvas');
@@ -243,9 +250,94 @@ async def get():
             hiddenCanvas.height = 480;
             const hiddenCtx = hiddenCanvas.getContext('2d');
 
-            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-                .then(stream => { video.srcObject = stream; })
-                .catch(err => console.error("Camera access denied:", err));
+            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true })
+                .then(stream => { 
+                    video.srcObject = stream; 
+                    
+                    // Setup Audio Pipeline for classification (16kHz PCM)
+                    try {
+                        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                        const source = audioCtx.createMediaStreamSource(stream);
+                        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+                        
+                        // Prevent feedback/echo by routing to a 0-gain node
+                        const gainNode = audioCtx.createGain();
+                        gainNode.gain.value = 0;
+                        source.connect(processor);
+                        processor.connect(gainNode);
+                        gainNode.connect(audioCtx.destination);
+                        
+                        processor.onaudioprocess = (e) => {
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                const inputData = e.inputBuffer.getChannelData(0);
+                                const buffer = new Uint8Array(inputData.buffer);
+                                let binary = '';
+                                for (let i = 0; i < buffer.byteLength; i++) {
+                                    binary += String.fromCharCode(buffer[i]);
+                                }
+                                latestAudioBase64 = window.btoa(binary);
+                            }
+                        };
+                    } catch (e) {
+                        console.error("Audio pipeline failed", e);
+                        uiAudio.textContent = "MIC ERROR";
+                    }
+                    
+                    // --- Speech Recognition for Keyword Triggers ---
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (SpeechRecognition) {
+                        const recognition = new SpeechRecognition();
+                        recognition.continuous = true;
+                        recognition.interimResults = false;
+                        
+                        recognition.onresult = (event) => {
+                            const last = event.results.length - 1;
+                            const transcript = event.results[last][0].transcript.toLowerCase();
+                            console.log("Speech detected:", transcript);
+                            
+                            let detectedAnimal = null;
+                            if (transcript.includes('bao bao') || transcript.includes('bow wow') || transcript.includes('bhow bhow') || transcript.includes('bark')) {
+                                detectedAnimal = "DOG";
+                            } else if (transcript.includes('wolf') || transcript.includes('howl') || transcript.includes('awoo')) {
+                                detectedAnimal = "WOLF";
+                            } else if (transcript.includes('meow') || transcript.includes('miao') || transcript.includes('purr') || transcript.includes('me out') || transcript.includes('miaow')) {
+                                detectedAnimal = "CAT";
+                            } else if (transcript.includes('moo')) {
+                                detectedAnimal = "COW";
+                            } else if (transcript.includes('quack')) {
+                                detectedAnimal = "DUCK";
+                            } else if (transcript.includes('roar')) {
+                                detectedAnimal = "LION OR TIGER";
+                            } else if (transcript.includes('oink')) {
+                                detectedAnimal = "PIG";
+                            } else if (transcript.includes('chirp') || transcript.includes('tweet')) {
+                                detectedAnimal = "BIRD";
+                            }
+                            
+                            if (detectedAnimal) {
+                                uiAudio.textContent = `[ VOCAL: ${detectedAnimal} ]`;
+                                uiAudioBox.style.borderColor = '#ff00ff';
+                                uiAudioBox.style.background = 'rgba(255, 0, 255, 0.1)';
+                                
+                                speakJarvis(`It seems it's a ${detectedAnimal.toLowerCase()}.`);
+                                
+                                setTimeout(() => {
+                                    uiAudioBox.style.borderColor = 'var(--glass-border)';
+                                    uiAudioBox.style.background = 'rgba(0, 243, 255, 0.05)';
+                                    uiAudio.textContent = "LISTENING...";
+                                }, 3000);
+                            }
+                        };
+                        
+                        // Keep recognition running
+                        recognition.onend = () => { try { recognition.start(); } catch(e){} };
+                        recognition.start();
+                    }
+                })
+                .catch(err => {
+                    console.error("Camera/Mic access denied:", err);
+                    uiAudio.textContent = "MIC DENIED";
+                });
 
             function connectWebSocket() {
                 const ws_url = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -265,19 +357,36 @@ async def get():
             function sendFrame() {
                 if (ws.readyState !== WebSocket.OPEN) return;
                 
-                // Ensure canvases match the actual camera resolution to fix alignment/tracking offset
+                // Ensure canvases match the actual camera aspect ratio to fix alignment/tracking offset
+                // But cap the width to 800px to prevent network/CPU overload which destroys FPS!
                 if (video.videoWidth && video.videoHeight) {
-                    if (hiddenCanvas.width !== video.videoWidth) {
-                        hiddenCanvas.width = video.videoWidth;
-                        hiddenCanvas.height = video.videoHeight;
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
+                    let targetWidth = video.videoWidth;
+                    let targetHeight = video.videoHeight;
+                    
+                    const MAX_WIDTH = 800;
+                    if (targetWidth > MAX_WIDTH) {
+                        targetHeight = Math.floor(targetHeight * (MAX_WIDTH / targetWidth));
+                        targetWidth = MAX_WIDTH;
+                    }
+
+                    if (hiddenCanvas.width !== targetWidth) {
+                        hiddenCanvas.width = targetWidth;
+                        hiddenCanvas.height = targetHeight;
+                        canvas.width = targetWidth;
+                        canvas.height = targetHeight;
                     }
                 }
                 
                 hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
                 const base64Data = hiddenCanvas.toDataURL('image/jpeg', 0.6);
-                ws.send(JSON.stringify({ image: base64Data }));
+                
+                const payload = { image: base64Data };
+                if (latestAudioBase64) {
+                    payload.audio = latestAudioBase64;
+                    latestAudioBase64 = null; // reset to avoid resending
+                }
+                
+                ws.send(JSON.stringify(payload));
             }
 
             // Emotion to Emoji Mapping
@@ -475,11 +584,56 @@ async def get():
                     uiTwoHandShape.textContent = "NONE";
                 }
                 
+                // --- Render Audio Event ---
+                if (data.audio_event) {
+                    uiAudio.textContent = `[ ${data.audio_event.toUpperCase()} ]`;
+                    uiAudioBox.style.borderColor = '#ff00ff';
+                    uiAudioBox.style.background = 'rgba(255, 0, 255, 0.1)';
+                    speakJarvis(`Sir, I have detected the sound of a ${data.audio_event}`);
+                    
+                    // Reset styling after 3 seconds
+                    setTimeout(() => {
+                        uiAudioBox.style.borderColor = 'var(--glass-border)';
+                        uiAudioBox.style.background = 'rgba(0, 243, 255, 0.05)';
+                        uiAudio.textContent = "LISTENING...";
+                    }, 3000);
+                }
+                
                 uiLeftHand.textContent = leftGesture;
                 uiRightHand.textContent = rightGesture;
             }
 
             video.addEventListener('playing', () => { connectWebSocket(); });
+            
+            // --- Jarvis TTS Logic ---
+            function speakJarvis(text) {
+                if (!window.speechSynthesis) return;
+                
+                // Do not interrupt if currently speaking
+                if (window.speechSynthesis.speaking) return; 
+                
+                const utterance = new SpeechSynthesisUtterance(text);
+                const voices = window.speechSynthesis.getVoices();
+                
+                // Attempt to find a British/Deep voice for Jarvis effect
+                const jarvisVoice = voices.find(v => 
+                    v.name.includes('Google UK English Male') || 
+                    v.name.includes('Great Britain') || 
+                    v.lang === 'en-GB'
+                );
+                
+                if (jarvisVoice) utterance.voice = jarvisVoice;
+                
+                utterance.pitch = 0.8; // slightly deeper
+                utterance.rate = 0.95; // deliberate, calm pace
+                
+                window.speechSynthesis.speak(utterance);
+            }
+            
+            // Ensure voices are preloaded in Chrome
+            if (window.speechSynthesis) {
+                window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+            }
         </script>
     </body>
     </html>

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     
     # Tracking Configuration
     MAX_DISAPPEARED_FRAMES: int = 30
-    MAX_DISTANCE_THRESHOLD: int = 150
+    MAX_DISTANCE_THRESHOLD: int = 300
 
     model_config = SettingsConfigDict(
         env_file=".env",

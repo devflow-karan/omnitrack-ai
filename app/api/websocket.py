@@ -5,6 +5,7 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import logging
 from app.services.face_detector import AdvancedFaceDetector
+from app.services.audio_detector import YAMNetAudioClassifier
 from app.models.schemas import FrameResponse
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ async def websocket_process(websocket: WebSocket):
     logger.info("Client connected for custom frames processing.")
 
     detector = AdvancedFaceDetector()
+    audio_classifier = YAMNetAudioClassifier()
     frame_count = 0
     start_time = time.time()
 
@@ -56,11 +58,22 @@ async def websocket_process(websocket: WebSocket):
                 frame_count = 0
                 start_time = time.time()
 
+            audio_event = None
+            audio_data = data.get("audio")
+            if audio_data:
+                try:
+                    audio_bytes = base64.b64decode(audio_data)
+                    float_array = np.frombuffer(audio_bytes, dtype=np.float32)
+                    audio_event = audio_classifier.process(float_array)
+                except Exception as e:
+                    logger.error(f"Error decoding audio: {e}")
+
             # 4. Construct response using Pydantic models
             response = FrameResponse(
                 faces=faces,
                 hands=hands,
                 two_hand_gesture=two_hand_gesture,
+                audio_event=audio_event,
                 fps=fps,
                 timestamp=time.time()
             )
@@ -74,3 +87,4 @@ async def websocket_process(websocket: WebSocket):
         logger.error(f"WebSocket error: {e}")
     finally:
         detector.close()
+        audio_classifier.close()
